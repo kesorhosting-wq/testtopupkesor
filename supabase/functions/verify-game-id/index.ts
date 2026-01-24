@@ -241,7 +241,36 @@ serve(async (req) => {
       body: JSON.stringify(requestBody),
     });
 
-    const data = await response.json();
+    // Check if response is JSON before parsing
+    const contentType = response.headers.get('content-type') || '';
+    const responseText = await response.text();
+    
+    log('DEBUG', 'G2Bulk raw response', { requestId, status: response.status, contentType, responseText: responseText.substring(0, 500) });
+
+    // Handle non-JSON responses (HTML error pages, etc.)
+    if (!contentType.includes('application/json')) {
+      log('ERROR', 'G2Bulk returned non-JSON response', { requestId, contentType, status: response.status });
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: 'Game verification service unavailable. Please try again later.',
+          debug: `API returned ${response.status}`
+        }),
+        { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseError) {
+      log('ERROR', 'Failed to parse G2Bulk response', { requestId, error: String(parseError), responseText: responseText.substring(0, 200) });
+      return new Response(
+        JSON.stringify({ success: false, error: 'Invalid response from verification service.' }),
+        { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
     log('DEBUG', 'G2Bulk response', { requestId, status: response.status, data });
 
     // Check if valid
