@@ -198,24 +198,29 @@ async function fulfillRechargeOrder(
     console.log(`[Fulfill-Recharge] From g2bulk_products: gameCode=${gameCode}, catalogueName=${catalogueName}`);
   }
 
-  // PRIORITY 2: Extract game_code from g2bulk_product_id format: game_{CODE}_{id}
-  if (!gameCode && order.g2bulk_product_id?.startsWith('game_')) {
+  // PRIORITY 2: Extract game_code and catalogue_id from g2bulk_product_id format: game_{CODE}_{id}
+  let catalogueId = '';
+  if (order.g2bulk_product_id?.startsWith('game_')) {
     const parts = order.g2bulk_product_id.split('_');
     // Format: game_CODE_id - extract CODE (can have underscores like ragnarok_idle)
     if (parts.length >= 3) {
-      // Remove 'game' prefix and last part (id)
-      gameCode = parts.slice(1, -1).join('_');
-      console.log(`[Fulfill-Recharge] Extracted gameCode from product_id: ${gameCode}`);
+      // Last part is the catalogue ID
+      catalogueId = parts[parts.length - 1];
+      // Remove 'game' prefix and last part (id) to get game code
+      if (!gameCode) {
+        gameCode = parts.slice(1, -1).join('_');
+      }
+      console.log(`[Fulfill-Recharge] Extracted gameCode: ${gameCode}, catalogueId: ${catalogueId}`);
     }
   }
 
-  // PRIORITY 3: Fallback to packages + games table
-  if (!gameCode || !catalogueName) {
+  // PRIORITY 3: Fallback to packages + games table for game_code
+  if (!gameCode) {
     console.log(`[Fulfill-Recharge] Looking up from packages/games tables...`);
     
     const { data: packageData } = await supabase
       .from('packages')
-      .select('name, games!inner(g2bulk_category_id)')
+      .select('name, g2bulk_type_id, games!inner(g2bulk_category_id)')
       .eq('g2bulk_product_id', order.g2bulk_product_id)
       .maybeSingle();
     
@@ -224,11 +229,37 @@ async function fulfillRechargeOrder(
         gameCode = packageData.games.g2bulk_category_id;
         console.log(`[Fulfill-Recharge] Got gameCode from games.g2bulk_category_id: ${gameCode}`);
       }
-      // Only use package name as catalogue if we couldn't find from g2bulk_products
-      if (!catalogueName && packageData.name) {
-        catalogueName = packageData.name;
-        console.log(`[Fulfill-Recharge] Using package name as catalogue: ${catalogueName}`);
+      if (!catalogueId && packageData.g2bulk_type_id) {
+        catalogueId = packageData.g2bulk_type_id;
+        console.log(`[Fulfill-Recharge] Got catalogueId from package.g2bulk_type_id: ${catalogueId}`);
       }
+    }
+  }
+
+  // PRIORITY 4: Fetch catalogue name from G2Bulk API using catalogueId
+  if (gameCode && catalogueId && !catalogueName) {
+    console.log(`[Fulfill-Recharge] Fetching catalogue from G2Bulk API for game: ${gameCode}, catalogueId: ${catalogueId}`);
+    try {
+      const catalogueResponse = await fetch(`${G2BULK_API_URL}/games/${gameCode}/catalogue`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'X-API-Key': apiKey,
+        },
+      });
+      
+      const catalogueData = await catalogueResponse.json();
+      if (catalogueData.catalogues && Array.isArray(catalogueData.catalogues)) {
+        const matchedCatalogue = catalogueData.catalogues.find(
+          (c: { id: number; name: string }) => c.id.toString() === catalogueId
+        );
+        if (matchedCatalogue) {
+          catalogueName = matchedCatalogue.name;
+          console.log(`[Fulfill-Recharge] Found catalogue from API: ${catalogueName} (id: ${catalogueId})`);
+        }
+      }
+    } catch (catalogueError) {
+      console.error(`[Fulfill-Recharge] Error fetching catalogue: ${catalogueError}`);
     }
   }
 
