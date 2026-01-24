@@ -569,6 +569,16 @@ export type Database = {
         }
         Returns: boolean
       }
+      process_wallet_transaction: {
+        Args: {
+          _amount: number
+          _description?: string
+          _reference_id?: string
+          _type: string
+          _user_id: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       app_role: "admin" | "user"

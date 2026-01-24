@@ -84,105 +84,102 @@ serve(async (req) => {
 
     if (action === "topup") {
       // Validate amount
-      if (!amount || amount <= 0) {
+      if (!amount || typeof amount !== 'number' || amount <= 0 || amount > 10000) {
         return new Response(
-          JSON.stringify({ error: "Invalid amount" }),
+          JSON.stringify({ error: "Invalid amount. Must be between 0 and 10,000" }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      // Get current balance
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("wallet_balance")
-        .eq("user_id", user.id)
-        .single();
+      // Use atomic transaction function to prevent race conditions
+      const { data: result, error: rpcError } = await supabase.rpc('process_wallet_transaction', {
+        _user_id: user.id,
+        _type: 'topup',
+        _amount: amount,
+        _description: 'Wallet top-up via KHQR',
+        _reference_id: orderId || null
+      });
 
-      const currentBalance = profile?.wallet_balance || 0;
-      const newBalance = currentBalance + amount;
-
-      // Create transaction record
-      const { error: txError } = await supabase
-        .from("wallet_transactions")
-        .insert({
-          user_id: user.id,
-          type: "topup",
-          amount: amount,
-          balance_before: currentBalance,
-          balance_after: newBalance,
-          description: `Wallet top-up via KHQR`,
-          reference_id: orderId || null
-        });
-
-      if (txError) {
-        log('ERROR', 'Failed to create transaction', { error: txError.message });
+      if (rpcError) {
+        log('ERROR', 'Failed to process topup transaction', { error: rpcError.message });
         return new Response(
           JSON.stringify({ error: "Failed to process top-up" }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      log('INFO', 'Wallet topup successful', { userId: user.id, amount, newBalance });
+      if (!result.success) {
+        log('ERROR', 'Transaction failed', { error: result.error });
+        return new Response(
+          JSON.stringify({ error: result.error || "Failed to process top-up" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      log('INFO', 'Wallet topup successful', { 
+        userId: user.id, 
+        amount, 
+        newBalance: result.new_balance,
+        transactionId: result.transaction_id 
+      });
 
       return new Response(
-        JSON.stringify({ success: true, newBalance }),
+        JSON.stringify({ success: true, newBalance: result.new_balance }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     if (action === "purchase") {
       // Validate amount
-      if (!amount || amount <= 0) {
+      if (!amount || typeof amount !== 'number' || amount <= 0 || amount > 10000) {
         return new Response(
-          JSON.stringify({ error: "Invalid amount" }),
+          JSON.stringify({ error: "Invalid amount. Must be between 0 and 10,000" }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      // Get current balance
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("wallet_balance")
-        .eq("user_id", user.id)
-        .single();
+      // Use atomic transaction function to prevent race conditions
+      // Pass negative amount for purchase (deduction)
+      const { data: result, error: rpcError } = await supabase.rpc('process_wallet_transaction', {
+        _user_id: user.id,
+        _type: 'purchase',
+        _amount: -amount, // Negative for deduction
+        _description: 'Game top-up purchase',
+        _reference_id: orderId || null
+      });
 
-      const currentBalance = profile?.wallet_balance || 0;
-
-      // Check sufficient balance
-      if (currentBalance < amount) {
-        return new Response(
-          JSON.stringify({ error: "Insufficient wallet balance" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      const newBalance = currentBalance - amount;
-
-      // Create transaction record
-      const { error: txError } = await supabase
-        .from("wallet_transactions")
-        .insert({
-          user_id: user.id,
-          type: "purchase",
-          amount: -amount,
-          balance_before: currentBalance,
-          balance_after: newBalance,
-          description: `Game top-up purchase`,
-          reference_id: orderId || null
-        });
-
-      if (txError) {
-        log('ERROR', 'Failed to create purchase transaction', { error: txError.message });
+      if (rpcError) {
+        log('ERROR', 'Failed to process purchase transaction', { error: rpcError.message });
         return new Response(
           JSON.stringify({ error: "Failed to process purchase" }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      log('INFO', 'Wallet purchase successful', { userId: user.id, amount, newBalance });
+      if (!result.success) {
+        // Check for insufficient balance error
+        if (result.error && result.error.includes('Insufficient balance')) {
+          return new Response(
+            JSON.stringify({ error: "Insufficient wallet balance" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        log('ERROR', 'Transaction failed', { error: result.error });
+        return new Response(
+          JSON.stringify({ error: result.error || "Failed to process purchase" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      log('INFO', 'Wallet purchase successful', { 
+        userId: user.id, 
+        amount, 
+        newBalance: result.new_balance,
+        transactionId: result.transaction_id 
+      });
 
       return new Response(
-        JSON.stringify({ success: true, newBalance }),
+        JSON.stringify({ success: true, newBalance: result.new_balance }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -192,8 +189,9 @@ serve(async (req) => {
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
-  } catch (error: any) {
-    log('ERROR', 'Wallet topup error', { error: error.message });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    log('ERROR', 'Wallet topup error', { error: errorMessage });
     return new Response(
       JSON.stringify({ error: "Internal server error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

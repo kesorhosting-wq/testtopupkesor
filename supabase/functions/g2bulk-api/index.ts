@@ -55,6 +55,36 @@ function buildG2BulkRequest(
   };
 }
 
+// Actions that require admin authentication
+const ADMIN_ACTIONS = new Set([
+  'get_account_balance',
+  'sync_products',
+  'bulk_import_all',
+  'sync_games_batch',
+  'sync_game_catalogue',
+  'get_orders',
+  'get_game_orders',
+  'get_transactions',
+  'create_game_order',
+  'purchase_product',
+]);
+
+// Actions allowed for authenticated users (not admin-only)
+const USER_ACTIONS = new Set([
+  'check_player_id',
+]);
+
+// Actions that can be called without authentication (internal use)
+const PUBLIC_ACTIONS = new Set([
+  'get_games',
+  'get_game_catalogue',
+  'get_categories',
+  'get_products',
+  'get_category_products',
+  'get_game_fields',
+  'get_game_servers',
+]);
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -67,6 +97,57 @@ serve(async (req) => {
 
     const { action, ...params } = await req.json();
     console.log(`[G2Bulk-API] Action: ${action}`, JSON.stringify(params));
+
+    // ============ AUTHENTICATION & AUTHORIZATION ============
+    // Check if action requires authentication
+    const requiresAdmin = ADMIN_ACTIONS.has(action);
+    const requiresAuth = requiresAdmin || USER_ACTIONS.has(action);
+
+    if (requiresAuth) {
+      const authHeader = req.headers.get('Authorization');
+      if (!authHeader) {
+        log('WARN', 'Missing authorization header for protected action', { action });
+        return new Response(
+          JSON.stringify({ success: false, error: 'Unauthorized - Authentication required' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Verify user with their token
+      const supabaseUser = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
+        global: { headers: { Authorization: authHeader } }
+      });
+
+      const { data: { user }, error: userError } = await supabaseUser.auth.getUser();
+      if (userError || !user) {
+        log('WARN', 'Invalid or expired token', { action, error: userError?.message });
+        return new Response(
+          JSON.stringify({ success: false, error: 'Unauthorized - Invalid or expired token' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // For admin actions, verify admin role
+      if (requiresAdmin) {
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', user.id)
+          .eq('role', 'admin')
+          .maybeSingle();
+
+        if (!roleData) {
+          log('WARN', 'Non-admin user attempted admin action', { action, userId: user.id });
+          return new Response(
+            JSON.stringify({ success: false, error: 'Forbidden - Admin access required' }),
+            { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        log('INFO', 'Admin action authorized', { action, userId: user.id });
+      } else {
+        log('INFO', 'User action authorized', { action, userId: user.id });
+      }
+    }
 
     // Get G2Bulk credentials from database
     const { data: apiConfig, error: configError } = await supabase
