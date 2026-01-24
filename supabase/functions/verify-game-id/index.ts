@@ -37,6 +37,7 @@ interface GameVerificationConfig {
 
 // Cache for game configs (refreshed every 5 minutes)
 let configCache: Map<string, GameVerificationConfig> | null = null;
+let allConfigsList: GameVerificationConfig[] = [];
 let cacheTimestamp = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
@@ -63,6 +64,8 @@ async function getGameConfigs(supabaseUrl: string, supabaseKey: string): Promise
   // Build lookup map (case-insensitive)
   const newCache = new Map<string, GameVerificationConfig>();
   const configs = data as GameVerificationConfig[] | null;
+  allConfigsList = configs || [];
+  
   for (const config of configs || []) {
     // Store with original name
     newCache.set(config.game_name, config);
@@ -78,6 +81,61 @@ async function getGameConfigs(supabaseUrl: string, supabaseKey: string): Promise
   log('INFO', 'Loaded game verification configs from database', { count: configs?.length || 0 });
   
   return configCache;
+}
+
+// Find alternate regional variants for a game
+function findAlternateRegions(gameCode: string, gameName: string): GameVerificationConfig[] {
+  // Extract base game name (remove region suffixes)
+  const basePatterns = [
+    /^(mlbb)(_.*)?$/i,
+    /^(freefire)(_.*)?$/i,
+    /^(valorant)(_.*)?$/i,
+    /^(pubg)(_.*)?$/i,
+    /^(cod)(_.*)?$/i,
+    /^(lol|league)(_.*)?$/i,
+    /^(genshin)(_.*)?$/i,
+    /^(hsr)(_.*)?$/i,
+    /^(zzz)(_.*)?$/i,
+    /^(hok)(_.*)?$/i,
+  ];
+  
+  let baseCode = gameCode.toLowerCase();
+  for (const pattern of basePatterns) {
+    const match = gameCode.match(pattern);
+    if (match) {
+      baseCode = match[1].toLowerCase();
+      break;
+    }
+  }
+  
+  // Also check common keywords in game name
+  const gameNameLower = gameName.toLowerCase();
+  const keywords = ['mobile legends', 'free fire', 'valorant', 'pubg', 'call of duty', 'league of legends', 'genshin', 'honkai', 'honor of kings'];
+  let matchedKeyword = '';
+  for (const kw of keywords) {
+    if (gameNameLower.includes(kw)) {
+      matchedKeyword = kw;
+      break;
+    }
+  }
+  
+  // Find all configs that match the base pattern
+  const alternates: GameVerificationConfig[] = [];
+  for (const config of allConfigsList) {
+    // Skip the current game
+    if (config.api_code === gameCode) continue;
+    
+    // Check if this is a regional variant of the same game
+    const configCodeLower = config.api_code.toLowerCase();
+    const configNameLower = config.game_name.toLowerCase();
+    
+    if (configCodeLower.startsWith(baseCode) || 
+        (matchedKeyword && configNameLower.includes(matchedKeyword))) {
+      alternates.push(config);
+    }
+  }
+  
+  return alternates.slice(0, 5); // Return max 5 alternatives
 }
 
 // Normalize game names for fuzzy matching
@@ -290,12 +348,32 @@ serve(async (req) => {
       );
     }
 
-    // Handle invalid response
+    // Handle invalid response - suggest alternate regions
     if (data.valid === 'invalid' || data.error) {
       const errorMsg = data.message || data.error || 'Player ID not found or invalid';
       log('WARN', 'Verification failed', { requestId, error: errorMsg, data });
+      
+      // Find alternate regional variants
+      const alternates = findAlternateRegions(gameCode, gameName);
+      const alternateNames = alternates.map(a => a.game_name);
+      
+      log('DEBUG', 'Found alternate regions', { requestId, alternateCount: alternates.length, alternates: alternateNames });
+      
+      let errorMessage = errorMsg;
+      if (alternates.length > 0) {
+        errorMessage = `${errorMsg}. This game has regional versions - try: ${alternateNames.join(', ')}`;
+      }
+      
       return new Response(
-        JSON.stringify({ success: false, error: errorMsg }),
+        JSON.stringify({ 
+          success: false, 
+          error: errorMessage,
+          alternateRegions: alternates.length > 0 ? alternates.map(a => ({
+            gameName: a.game_name,
+            apiCode: a.api_code,
+            requiresZone: a.requires_zone
+          })) : undefined
+        }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
