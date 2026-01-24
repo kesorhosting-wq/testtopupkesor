@@ -384,6 +384,14 @@ async function fulfillG2BulkOrder(supabase: any, orderId: string) {
     return { success: false, error: 'Order not found' };
   }
 
+  // GUARD: Prevent double-execution - only process if status is 'paid' or 'pending'
+  // If already processing/completed/failed, skip to prevent duplicate G2Bulk orders
+  const allowedStatuses = ['paid', 'pending'];
+  if (!allowedStatuses.includes(order.status)) {
+    console.log(`[Fulfill] Order already ${order.status}, skipping to prevent double-execution`);
+    return { success: true, status: order.status, message: 'Already processed' };
+  }
+
   console.log(`[Fulfill] Order found:`, JSON.stringify({
     id: order.id,
     g2bulk_product_id: order.g2bulk_product_id,
