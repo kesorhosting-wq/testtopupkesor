@@ -1,0 +1,15 @@
+-- Enable realtime for topup_orders table
+ALTER TABLE public.topup_orders REPLICA IDENTITY FULL;
+
+-- Add table to realtime publication (if not already added)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' 
+    AND schemaname = 'public' 
+    AND tablename = 'topup_orders'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.topup_orders;
+  END IF;
+END $$;
