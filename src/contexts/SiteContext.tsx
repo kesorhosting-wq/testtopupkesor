@@ -245,27 +245,22 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         supabase.from('games').select('*').order('sort_order', { ascending: true }),
         supabase.from('packages').select('*').order('sort_order', { ascending: true }),
         supabase.from('special_packages').select('*').order('sort_order', { ascending: true }),
-        // Use public view to avoid exposing sensitive config data (webhook_secret, api keys)
-        supabase.from('payment_gateways_public').select('*').eq('slug', 'ikhode-bakong').maybeSingle(),
+        // Public-safe gateway config via backend function (bypasses RLS on payment_gateways)
+        supabase.functions.invoke('get-ikhode-public-config'),
       ]);
       
       const settingsData = settingsResult.data;
       const gamesData = gamesResult.data;
       const packagesData = packagesResult.data;
       const specialPackagesData = specialPackagesResult.data;
-      const ikhodeGateway = ikhodeGatewayResult.data;
+      const ikhodeGateway = (ikhodeGatewayResult as any)?.data;
 
       // Load IKhode payment gateway config (public view only exposes websocket_url, not secrets)
-      if (ikhodeGateway && ikhodeGateway.enabled) {
-        const config = ikhodeGateway.config as {
-          websocket_url?: string;
-        } | null;
-        
+      if (ikhodeGateway?.success && ikhodeGateway?.enabled) {
         setIkhodePayment({
           id: ikhodeGateway.id || undefined,
-          isEnabled: ikhodeGateway.enabled || false,
-          websocketUrl: config?.websocket_url || undefined,
-          // Note: webhook_secret is NOT exposed to frontend - only available server-side
+          isEnabled: true,
+          websocketUrl: ikhodeGateway.websocket_url || undefined,
         });
       } else {
         setIkhodePayment({ isEnabled: false });
