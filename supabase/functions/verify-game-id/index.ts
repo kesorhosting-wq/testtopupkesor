@@ -286,10 +286,10 @@ serve(async (req) => {
       requestBody.server_id = zoneValue.toString();
     }
 
-    log('INFO', 'Calling G2Bulk checkPlayerIdPublic', { requestId, requestBody });
+    log('INFO', 'Calling G2Bulk checkPlayerId', { requestId, requestBody });
 
-    // Call G2Bulk API
-    const response = await fetch(`${G2BULK_API_URL}/games/checkPlayerIdPublic`, {
+    // Call G2Bulk API - use /games/checkPlayerId endpoint
+    const response = await fetch(`${G2BULK_API_URL}/games/checkPlayerId`, {
       method: 'POST',
       headers: {
         'Accept': 'application/json',
