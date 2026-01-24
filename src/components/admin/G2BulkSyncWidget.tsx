@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
-import { RefreshCw, CheckCircle2, Package, Clock, Database } from 'lucide-react';
+import { RefreshCw, CheckCircle2, Package, Clock, Database, Zap } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 interface G2BulkSyncWidgetProps {
@@ -12,9 +12,11 @@ interface G2BulkSyncWidgetProps {
 
 const G2BulkSyncWidget: React.FC<G2BulkSyncWidgetProps> = ({ onSyncComplete }) => {
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isSyncingUsed, setIsSyncingUsed] = useState(false);
   const [productCount, setProductCount] = useState(0);
   const [categoryCount, setCategoryCount] = useState(0);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const [syncProgress, setSyncProgress] = useState<string>('');
 
   useEffect(() => {
     loadStats();
@@ -57,10 +59,70 @@ const G2BulkSyncWidget: React.FC<G2BulkSyncWidgetProps> = ({ onSyncComplete }) =
     }
   };
 
-  const handleSync = async () => {
+  // Sync only games that are currently in use (faster)
+  const handleSyncUsedGames = async () => {
+    setIsSyncingUsed(true);
+    setSyncProgress('Loading games...');
+    
+    try {
+      // Get all games with g2bulk_category_id
+      const { data: localGames } = await supabase
+        .from('games')
+        .select('name, g2bulk_category_id')
+        .not('g2bulk_category_id', 'is', null);
+
+      if (!localGames || localGames.length === 0) {
+        toast({ title: 'No games to sync', description: 'Add games with G2Bulk category IDs first.', variant: 'destructive' });
+        return;
+      }
+
+      const gameCodes = localGames.map(g => g.g2bulk_category_id).filter(Boolean) as string[];
+      setSyncProgress(`Syncing ${gameCodes.length} games...`);
+
+      let totalSynced = 0;
+      const batchSize = 5; // Sync 5 games at a time
+      
+      for (let i = 0; i < gameCodes.length; i += batchSize) {
+        const batch = gameCodes.slice(i, i + batchSize);
+        setSyncProgress(`Syncing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(gameCodes.length / batchSize)}...`);
+        
+        const { data, error } = await supabase.functions.invoke('g2bulk-api', {
+          body: { action: 'sync_games_batch', game_codes: batch },
+        });
+
+        if (error) {
+          console.error('Batch sync error:', error);
+          continue;
+        }
+
+        if (data?.success && data?.data) {
+          totalSynced += data.data.total_synced;
+        }
+      }
+
+      await loadStats();
+      setLastSyncTime(new Date());
+
+      toast({
+        title: 'Sync complete!',
+        description: `${totalSynced} products from ${gameCodes.length} games`,
+      });
+
+      onSyncComplete?.();
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Sync failed';
+      toast({ title: 'Sync failed', description: errorMessage, variant: 'destructive' });
+    } finally {
+      setIsSyncingUsed(false);
+      setSyncProgress('');
+    }
+  };
+
+  // Full sync (all games - may timeout)
+  const handleFullSync = async () => {
     setIsSyncing(true);
     try {
-      toast({ title: 'Syncing G2Bulk products...', description: 'This may take a minute.' });
+      toast({ title: 'Syncing all G2Bulk products...', description: 'This may take several minutes.' });
 
       const { data, error } = await supabase.functions.invoke('g2bulk-api', {
         body: { action: 'sync_products' },
@@ -103,22 +165,39 @@ const G2BulkSyncWidget: React.FC<G2BulkSyncWidgetProps> = ({ onSyncComplete }) =
     return `${diffDays}d ago`;
   };
 
+  const isAnySyncing = isSyncing || isSyncingUsed;
+
   return (
     <Card className="border-gold/30 bg-gradient-to-br from-gold/5 to-transparent">
       <CardContent className="p-4">
         <div className="flex flex-wrap items-center gap-4">
-          {/* Sync Button */}
+          {/* Quick Sync Button (used games only) */}
           <Button
-            onClick={handleSync}
-            disabled={isSyncing}
+            onClick={handleSyncUsedGames}
+            disabled={isAnySyncing}
             className="bg-gold hover:bg-gold-dark text-primary-foreground"
+          >
+            {isSyncingUsed ? (
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Zap className="w-4 h-4 mr-2" />
+            )}
+            {isSyncingUsed ? syncProgress || 'Syncing...' : 'Quick Sync'}
+          </Button>
+
+          {/* Full Sync Button */}
+          <Button
+            onClick={handleFullSync}
+            disabled={isAnySyncing}
+            variant="outline"
+            size="sm"
           >
             {isSyncing ? (
               <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
             ) : (
               <RefreshCw className="w-4 h-4 mr-2" />
             )}
-            {isSyncing ? 'Syncing...' : 'Sync Now'}
+            {isSyncing ? 'Syncing All...' : 'Full Sync'}
           </Button>
 
           {/* Stats */}

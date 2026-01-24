@@ -610,6 +610,128 @@ serve(async (req) => {
         );
       }
 
+      // ============ SYNC SINGLE GAME CATALOGUE ============
+      case 'sync_game_catalogue': {
+        const { game_code, game_name } = params;
+        if (!game_code) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'game_code is required' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        console.log(`[G2Bulk-API] Syncing catalogue for game: ${game_code}`);
+
+        const catRequest = buildG2BulkRequest(`/games/${game_code}/catalogue`, apiKey);
+        const catResponse = await fetch(catRequest.url, catRequest.options);
+        const catResult = await catResponse.json();
+
+        if (!catResult.success || !catResult.catalogues) {
+          return new Response(
+            JSON.stringify({ success: false, error: `No catalogue found for ${game_code}` }),
+            { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const products = catResult.catalogues.map((catalogue: { id: number; name: string; amount: number }) => ({
+          g2bulk_type_id: String(catalogue.id),
+          g2bulk_product_id: `game_${game_code}_${catalogue.id}`,
+          game_name: game_name || game_code,
+          product_name: catalogue.name,
+          denomination: catalogue.name,
+          price: parseFloat(String(catalogue.amount)) || 0,
+          currency: 'USD',
+          fields: { game_code },
+          product_type: 'recharge',
+        }));
+
+        if (products.length > 0) {
+          const { error: upsertError } = await supabase
+            .from('g2bulk_products')
+            .upsert(products, { 
+              onConflict: 'g2bulk_product_id',
+              ignoreDuplicates: false 
+            });
+
+          if (upsertError) {
+            console.error('[G2Bulk-API] Upsert error:', upsertError);
+            throw upsertError;
+          }
+        }
+
+        console.log(`[G2Bulk-API] Synced ${products.length} products for ${game_code}`);
+        
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            data: { game_code, synced: products.length } 
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // ============ BATCH SYNC GAMES CATALOGUES ============
+      case 'sync_games_batch': {
+        const { game_codes = [] } = params;
+        
+        if (!game_codes.length) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'game_codes array is required' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        console.log(`[G2Bulk-API] Batch syncing ${game_codes.length} games...`);
+
+        let totalSynced = 0;
+        const results: Array<{ code: string; synced: number; error?: string }> = [];
+
+        for (const gameCode of game_codes) {
+          try {
+            const catRequest = buildG2BulkRequest(`/games/${gameCode}/catalogue`, apiKey);
+            const catResponse = await fetch(catRequest.url, catRequest.options);
+            const catResult = await catResponse.json();
+
+            if (catResult.success && catResult.catalogues) {
+              const products = catResult.catalogues.map((catalogue: { id: number; name: string; amount: number }) => ({
+                g2bulk_type_id: String(catalogue.id),
+                g2bulk_product_id: `game_${gameCode}_${catalogue.id}`,
+                game_name: gameCode,
+                product_name: catalogue.name,
+                denomination: catalogue.name,
+                price: parseFloat(String(catalogue.amount)) || 0,
+                currency: 'USD',
+                fields: { game_code: gameCode },
+                product_type: 'recharge',
+              }));
+
+              if (products.length > 0) {
+                await supabase
+                  .from('g2bulk_products')
+                  .upsert(products, { onConflict: 'g2bulk_product_id', ignoreDuplicates: false });
+              }
+
+              totalSynced += products.length;
+              results.push({ code: gameCode, synced: products.length });
+            } else {
+              results.push({ code: gameCode, synced: 0, error: 'No catalogue' });
+            }
+          } catch (e) {
+            results.push({ code: gameCode, synced: 0, error: String(e) });
+          }
+        }
+
+        console.log(`[G2Bulk-API] Batch sync complete: ${totalSynced} products`);
+        
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            data: { total_synced: totalSynced, games: results.length, details: results } 
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
       default:
         return new Response(
           JSON.stringify({ success: false, error: `Unknown action: ${action}` }),
