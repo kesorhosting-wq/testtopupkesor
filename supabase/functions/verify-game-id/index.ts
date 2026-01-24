@@ -298,6 +298,19 @@ serve(async (req) => {
           const errorMsg = data.message || data.error || data.msg || 'Account not found';
           console.log(`RapidAPI returned error: ${errorMsg}`);
           
+          // Check if this is a game-specific error that indicates the user EXISTS
+          // Error codes like 630 (Error_IAP_FirstChargeDoubbleBuyed) mean the account is valid
+          const gameSpecificErrorCodes = ['630', 'Error_IAP', 'FirstCharge', 'DoubbleBuyed'];
+          const isGameSpecificError = gameSpecificErrorCodes.some(code => 
+            errorMsg.includes(code)
+          );
+          
+          if (isGameSpecificError) {
+            console.log('Game-specific error detected - user likely exists, falling back to free API');
+            // Don't return error, let it fall through to free API
+            throw new Error('Game-specific error, trying fallback');
+          }
+          
           // If it's a "zone required" error, try with a default zone
           if (errorMsg.toLowerCase().includes('zone') && !serverId && !gameConfig.default_zone) {
             console.log('Retrying with default zone...');
@@ -333,10 +346,22 @@ serve(async (req) => {
             }
           }
           
-          return new Response(
-            JSON.stringify({ success: false, error: errorMsg }),
-            { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          // Only return 404 for genuine "not found" errors
+          const notFoundIndicators = ['not found', 'invalid', 'does not exist', 'no user', 'no account'];
+          const isNotFound = notFoundIndicators.some(indicator => 
+            errorMsg.toLowerCase().includes(indicator)
           );
+          
+          if (isNotFound) {
+            return new Response(
+              JSON.stringify({ success: false, error: errorMsg }),
+              { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+          
+          // For other errors, try fallback
+          console.log('Unknown RapidAPI error, trying fallback APIs');
+          throw new Error(errorMsg);
         }
         
         // Unknown response format - continue to fallback providers
