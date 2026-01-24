@@ -27,42 +27,106 @@ function log(level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG', message: string, data?:
   }
 }
 
-// Map game names to G2Bulk game codes
-function getG2BulkGameCode(gameName: string): string {
+interface GameVerificationConfig {
+  game_name: string;
+  api_code: string;
+  api_provider: string;
+  requires_zone: boolean;
+  default_zone: string | null;
+}
+
+// Cache for game configs (refreshed every 5 minutes)
+let configCache: Map<string, GameVerificationConfig> | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function getGameConfigs(supabaseUrl: string, supabaseKey: string): Promise<Map<string, GameVerificationConfig>> {
+  const now = Date.now();
+  
+  // Return cached configs if still valid
+  if (configCache && (now - cacheTimestamp) < CACHE_TTL) {
+    return configCache;
+  }
+  
+  const supabase = createClient(supabaseUrl, supabaseKey);
+  
+  const { data, error } = await supabase
+    .from('game_verification_configs')
+    .select('game_name, api_code, api_provider, requires_zone, default_zone')
+    .eq('is_active', true);
+  
+  if (error) {
+    log('ERROR', 'Failed to fetch game configs', { error: error.message });
+    return configCache || new Map();
+  }
+  
+  // Build lookup map (case-insensitive)
+  const newCache = new Map<string, GameVerificationConfig>();
+  const configs = data as GameVerificationConfig[] | null;
+  for (const config of configs || []) {
+    // Store with original name
+    newCache.set(config.game_name, config);
+    // Also store lowercase version for case-insensitive lookup
+    newCache.set(config.game_name.toLowerCase(), config);
+    // Also store by api_code for direct lookups
+    newCache.set(config.api_code, config);
+    newCache.set(config.api_code.toLowerCase(), config);
+  }
+  
+  configCache = newCache;
+  cacheTimestamp = now;
+  log('INFO', 'Loaded game verification configs from database', { count: configs?.length || 0 });
+  
+  return configCache;
+}
+
+// Normalize game names for fuzzy matching
+function normalizeGameName(gameName: string): string {
   const normalized = gameName.toLowerCase().trim();
   
-  // Mobile Legends variants
-  if (normalized.includes('mobile legends russia') || normalized === 'mlbb_ru') return 'mlbb_ru';
-  if (normalized.includes('mobile legends brazil') || normalized === 'mlbb_br') return 'mlbb_br';
-  if (normalized.includes('mobile legends global') || normalized === 'mlbb_global') return 'mlbb_global';
-  if (normalized.includes('mobile legends promo') || normalized === 'mlbb_promo') return 'mlbb_promo';
-  if (normalized.includes('mobile legends special') || normalized === 'mlbb_special') return 'mlbb_special';
-  if (normalized.includes('mobile legends exclusive') || normalized === 'mlbb_exclusive') return 'mlbb_exclusive';
-  if (normalized.includes('mobile legends') || normalized === 'mlbb') return 'mlbb';
+  // Common aliases
+  if (normalized === 'mlbb' || normalized.includes('mobile legends bang bang')) return 'Mobile Legends';
+  if (normalized === 'ml') return 'Mobile Legends';
+  if (normalized === 'ff' || normalized === 'freefire') return 'Free Fire';
+  if (normalized === 'hok') return 'Honor of Kings';
+  if (normalized === 'pubgm') return 'PUBG Mobile';
+  if (normalized === 'codm') return 'Call of Duty Mobile';
+  if (normalized === 'aov') return 'Arena of Valor';
+  if (normalized === 'zzz') return 'Zenless Zone Zero';
+  if (normalized === 'hsr') return 'Honkai Star Rail';
   
-  // Magic Chess
-  if (normalized.includes('magic chess')) return 'magic_chest_gogo';
+  return gameName;
+}
+
+// Find game config from database
+async function findGameConfig(gameName: string, supabaseUrl: string, supabaseKey: string): Promise<GameVerificationConfig | null> {
+  const configs = await getGameConfigs(supabaseUrl, supabaseKey);
   
-  // Other games
-  if (normalized.includes('blood strike') || normalized.includes('bloodstrike')) return 'bloodstrike';
-  if (normalized.includes('pubg')) return 'pubgm';
-  if (normalized.includes('honor of kings') || normalized === 'hok') return 'hok';
-  if (normalized.includes('free fire') || normalized.includes('freefire')) return 'freefire_global';
-  if (normalized.includes('valorant cambodia') || normalized.includes('valorant_kh')) return 'valorant_kh';
-  if (normalized.includes('valorant')) return 'valorant';
-  if (normalized.includes('delta force')) return 'deltaforce';
-  if (normalized.includes('genshin')) return 'genshin';
-  if (normalized.includes('honkai') && normalized.includes('star')) return 'honkai_star_rail';
-  if (normalized.includes('zenless') || normalized === 'zzz') return 'zzz';
-  if (normalized.includes('call of duty') || normalized.includes('cod')) return 'codm';
-  if (normalized.includes('arena of valor') || normalized === 'aov') return 'aov';
-  if (normalized.includes('wild rift')) return 'wildrift';
-  if (normalized.includes('clash of clans') || normalized === 'coc') return 'coc';
-  if (normalized.includes('brawl stars')) return 'brawl_stars';
-  if (normalized.includes('clash royale')) return 'clash_royale';
+  // Try exact match first
+  let config = configs.get(gameName);
+  if (config) return config;
   
-  // Default: try to create slug from name
-  return normalized.replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  // Try lowercase match
+  config = configs.get(gameName.toLowerCase());
+  if (config) return config;
+  
+  // Try normalized name
+  const normalized = normalizeGameName(gameName);
+  config = configs.get(normalized);
+  if (config) return config;
+  
+  config = configs.get(normalized.toLowerCase());
+  if (config) return config;
+  
+  // Try partial match - search through all configs
+  for (const [key, value] of configs.entries()) {
+    if (key.toLowerCase().includes(gameName.toLowerCase()) || 
+        gameName.toLowerCase().includes(key.toLowerCase())) {
+      return value;
+    }
+  }
+  
+  return null;
 }
 
 serve(async (req) => {
@@ -123,9 +187,34 @@ serve(async (req) => {
       );
     }
 
-    // Get G2Bulk game code
-    const gameCode = getG2BulkGameCode(gameName);
-    log('DEBUG', 'Game code mapping', { requestId, gameName, gameCode });
+    // Find game config from database
+    const gameConfig = await findGameConfig(gameName, supabaseUrl, supabaseServiceKey);
+    
+    let gameCode: string;
+    let requiresZone = false;
+    
+    if (gameConfig) {
+      gameCode = gameConfig.api_code;
+      requiresZone = gameConfig.requires_zone;
+      log('DEBUG', 'Found game config in database', { requestId, gameName, gameCode, requiresZone });
+    } else {
+      // Fallback: try using the game name as code (lowercase, underscores)
+      gameCode = gameName.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+      log('WARN', 'No game config found, using fallback code', { requestId, gameName, gameCode });
+    }
+
+    // Check if zone is required but not provided
+    if (requiresZone && !serverId && !gameConfig?.default_zone) {
+      log('WARN', 'Zone required but not provided', { requestId, gameName });
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: `${gameName} requires a Server/Zone ID. Please enter your Server ID.`,
+          requiresServerId: true
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // Build request body for G2Bulk checkPlayerIdPublic
     const requestBody: Record<string, string> = {
@@ -133,9 +222,10 @@ serve(async (req) => {
       user_id: userId.toString(),
     };
 
-    // Add server_id if provided
-    if (serverId) {
-      requestBody.server_id = serverId.toString();
+    // Add server_id if provided or use default
+    const zoneValue = serverId || gameConfig?.default_zone;
+    if (zoneValue) {
+      requestBody.server_id = zoneValue.toString();
     }
 
     log('INFO', 'Calling G2Bulk checkPlayerIdPublic', { requestId, requestBody });
