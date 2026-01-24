@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Edit2, Save, X, CheckCircle, XCircle, RefreshCw, Shield } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, CheckCircle, XCircle, RefreshCw, Shield, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -22,9 +22,26 @@ interface VerificationConfig {
   updated_at: string;
 }
 
+interface G2BulkGame {
+  id: number;
+  code: string;
+  name: string;
+  image_url: string;
+}
+
+// Games that require zone/server ID for verification
+const GAMES_REQUIRING_ZONE = [
+  'mlbb', 'mlbb_br', 'mlbb_ru', 'mlbb_global', 'mlbb_promo', 'mlbb_special', 'mlbb_exclusive',
+  'magic_chest_gogo', 'magic_chess_gogo',
+  'hok',
+  'freefire', 'freefire_global', 'freefire_vn', 'freefire_id', 'freefire_br', 'freefire_th', 
+  'freefire_sg', 'freefire_me', 'freefire_tw', 'freefire_eu', 'freefire_latam', 'freefire_sgmy', 'freefire_bd'
+];
+
 const GameVerificationConfigsTab: React.FC = () => {
   const [configs, setConfigs] = useState<VerificationConfig[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState<Partial<VerificationConfig>>({});
   const [showAddForm, setShowAddForm] = useState(false);
@@ -55,6 +72,76 @@ const GameVerificationConfigsTab: React.FC = () => {
   useEffect(() => {
     fetchConfigs();
   }, []);
+
+  const syncFromG2Bulk = async () => {
+    setSyncing(true);
+    try {
+      // Fetch games from G2Bulk API
+      const { data, error } = await supabase.functions.invoke('g2bulk-api', {
+        body: { action: 'get_games' }
+      });
+
+      if (error || !data?.success) {
+        throw new Error(error?.message || data?.error || 'Failed to fetch games from G2Bulk');
+      }
+
+      const games: G2BulkGame[] = data.data?.games || [];
+      
+      if (games.length === 0) {
+        toast({ title: 'No games found', description: 'G2Bulk returned no games', variant: 'destructive' });
+        return;
+      }
+
+      // Get existing configs
+      const { data: existingConfigs } = await supabase
+        .from('game_verification_configs')
+        .select('api_code');
+      
+      const existingCodes = new Set((existingConfigs || []).map(c => c.api_code));
+
+      // Prepare new configs to insert
+      const newConfigs = games
+        .filter(game => !existingCodes.has(game.code))
+        .map(game => ({
+          game_name: game.name,
+          api_code: game.code,
+          api_provider: 'g2bulk',
+          requires_zone: GAMES_REQUIRING_ZONE.some(z => game.code.includes(z) || z.includes(game.code)),
+          is_active: true
+        }));
+
+      if (newConfigs.length === 0) {
+        toast({ title: 'Already synced', description: `All ${games.length} G2Bulk games are already configured` });
+        setSyncing(false);
+        return;
+      }
+
+      // Insert new configs
+      const { error: insertError } = await supabase
+        .from('game_verification_configs')
+        .insert(newConfigs);
+
+      if (insertError) {
+        throw new Error(insertError.message);
+      }
+
+      toast({ 
+        title: 'Sync complete!', 
+        description: `Added ${newConfigs.length} new games. Total: ${games.length} games available.` 
+      });
+      
+      fetchConfigs();
+    } catch (error) {
+      console.error('Sync error:', error);
+      toast({ 
+        title: 'Sync failed', 
+        description: error instanceof Error ? error.message : 'Unknown error', 
+        variant: 'destructive' 
+      });
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const handleAdd = async () => {
     if (!newConfig.game_name || !newConfig.api_code) {
@@ -152,6 +239,24 @@ const GameVerificationConfigsTab: React.FC = () => {
     }
   };
 
+  const handleDeleteAll = async () => {
+    if (!confirm('Are you sure you want to delete ALL verification configs? This cannot be undone.')) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('game_verification_configs')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all
+
+    if (error) {
+      toast({ title: 'Failed to delete configs', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'All configs deleted!' });
+      fetchConfigs();
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -172,13 +277,27 @@ const GameVerificationConfigsTab: React.FC = () => {
                 Game ID Verification Configs
               </CardTitle>
               <CardDescription className="mt-1">
-                Manage API mappings for game ID verification. New games are auto-synced with sensible defaults.
+                Manage API mappings for game ID verification using G2Bulk API.
               </CardDescription>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <Button variant="outline" size="sm" onClick={fetchConfigs}>
                 <RefreshCw className="w-4 h-4 mr-1" />
                 Refresh
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={syncFromG2Bulk}
+                disabled={syncing}
+                className="border-blue-500/50 text-blue-500 hover:bg-blue-500/10"
+              >
+                {syncing ? (
+                  <RefreshCw className="w-4 h-4 mr-1 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4 mr-1" />
+                )}
+                {syncing ? 'Syncing...' : 'Sync from G2Bulk'}
               </Button>
               <Button 
                 size="sm" 
@@ -205,11 +324,11 @@ const GameVerificationConfigsTab: React.FC = () => {
                 />
               </div>
               <div>
-                <Label className="text-sm">API Code</Label>
+                <Label className="text-sm">API Code (G2Bulk)</Label>
                 <Input
                   value={newConfig.api_code}
                   onChange={(e) => setNewConfig(prev => ({ ...prev, api_code: e.target.value }))}
-                  placeholder="e.g. mobile-legends"
+                  placeholder="e.g. mlbb"
                   className="border-gold/50 mt-1"
                 />
               </div>
@@ -264,6 +383,41 @@ const GameVerificationConfigsTab: React.FC = () => {
           </CardContent>
         )}
       </Card>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card className="border-gold/20">
+          <CardContent className="p-4 text-center">
+            <div className="text-2xl font-bold text-gold">{configs.length}</div>
+            <div className="text-sm text-muted-foreground">Total Configs</div>
+          </CardContent>
+        </Card>
+        <Card className="border-green-500/20">
+          <CardContent className="p-4 text-center">
+            <div className="text-2xl font-bold text-green-500">{configs.filter(c => c.is_active).length}</div>
+            <div className="text-sm text-muted-foreground">Active</div>
+          </CardContent>
+        </Card>
+        <Card className="border-yellow-500/20">
+          <CardContent className="p-4 text-center">
+            <div className="text-2xl font-bold text-yellow-500">{configs.filter(c => c.requires_zone).length}</div>
+            <div className="text-sm text-muted-foreground">Require Zone</div>
+          </CardContent>
+        </Card>
+        <Card className="border-destructive/20">
+          <CardContent className="p-4">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={handleDeleteAll}
+              className="w-full border-destructive/50 text-destructive hover:bg-destructive/10"
+            >
+              <Trash2 className="w-4 h-4 mr-1" />
+              Clear All
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Configs List */}
       <Card className="border-gold/30">
@@ -354,7 +508,11 @@ const GameVerificationConfigsTab: React.FC = () => {
                         <td className="p-3">
                           <code className="text-xs bg-secondary px-2 py-1 rounded">{config.api_code}</code>
                         </td>
-                        <td className="p-3 text-sm text-muted-foreground capitalize">{config.api_provider}</td>
+                        <td className="p-3">
+                          <Badge variant="outline" className="text-xs capitalize">
+                            {config.api_provider}
+                          </Badge>
+                        </td>
                         <td className="p-3">
                           {config.requires_zone ? (
                             <Badge variant="secondary" className="text-xs">
@@ -400,7 +558,7 @@ const GameVerificationConfigsTab: React.FC = () => {
                 {configs.length === 0 && (
                   <tr>
                     <td colSpan={6} className="p-8 text-center text-muted-foreground">
-                      No verification configs found. Add one or create a game to auto-generate.
+                      No verification configs found. Click "Sync from G2Bulk" to import all games.
                     </td>
                   </tr>
                 )}
@@ -414,8 +572,9 @@ const GameVerificationConfigsTab: React.FC = () => {
       <Card className="border-blue-500/30 bg-blue-500/5">
         <CardContent className="p-4">
           <p className="text-sm text-muted-foreground">
-            <strong>Auto-sync:</strong> When you add a new game, a verification config is automatically created with sensible defaults based on the game name. 
-            Common games like Mobile Legends, Free Fire, PUBG, etc. are mapped to their correct API codes.
+            <strong>Sync from G2Bulk:</strong> Click the sync button to import all game codes from G2Bulk API. 
+            This will add any new games that don't already exist in your configs. Games like Mobile Legends, Free Fire, and HOK 
+            are automatically marked as requiring Zone/Server ID.
           </p>
         </CardContent>
       </Card>
