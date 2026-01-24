@@ -31,7 +31,7 @@ const GameVerificationConfigsTab: React.FC = () => {
   const [newConfig, setNewConfig] = useState({
     game_name: '',
     api_code: '',
-    api_provider: 'rapidapi',
+    api_provider: 'g2bulk',
     requires_zone: false,
     default_zone: '',
     is_active: true
@@ -78,7 +78,7 @@ const GameVerificationConfigsTab: React.FC = () => {
       setNewConfig({
         game_name: '',
         api_code: '',
-        api_provider: 'rapidapi',
+        api_provider: 'g2bulk',
         requires_zone: false,
         default_zone: '',
         is_active: true
@@ -223,8 +223,7 @@ const GameVerificationConfigsTab: React.FC = () => {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="rapidapi">RapidAPI</SelectItem>
-                    <SelectItem value="custom">Custom</SelectItem>
+                    <SelectItem value="g2bulk">G2Bulk</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -302,15 +301,14 @@ const GameVerificationConfigsTab: React.FC = () => {
                         </td>
                         <td className="p-3">
                           <Select 
-                            value={editData.api_provider || 'rapidapi'} 
+                            value={editData.api_provider || 'g2bulk'} 
                             onValueChange={(value) => setEditData(prev => ({ ...prev, api_provider: value }))}
                           >
                             <SelectTrigger className="h-8 border-gold/50">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="rapidapi">RapidAPI</SelectItem>
-                              <SelectItem value="custom">Custom</SelectItem>
+                              <SelectItem value="g2bulk">G2Bulk</SelectItem>
                             </SelectContent>
                           </Select>
                         </td>
