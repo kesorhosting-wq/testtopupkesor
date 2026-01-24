@@ -47,6 +47,11 @@ const TopupPage: React.FC = () => {
   const [isVerifying, setIsVerifying] = useState(false);
   const [verifiedUser, setVerifiedUser] = useState<VerifiedUser | null>(null);
   const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [alternateRegions, setAlternateRegions] = useState<Array<{
+    gameName: string;
+    apiCode: string;
+    requiresZone: boolean;
+  }> | null>(null);
 
   // Auto-fill cached IDs when available
   useEffect(() => {
@@ -709,6 +714,7 @@ const TopupPage: React.FC = () => {
     setIsVerifying(true);
     setVerificationError(null);
     setVerifiedUser(null);
+    setAlternateRegions(null);
 
     try {
       const { data, error } = await supabase.functions.invoke("verify-game-id", {
@@ -769,6 +775,12 @@ const TopupPage: React.FC = () => {
       } else {
         const errorMsg = data?.error || "មិនអាចផ្ទៀងផ្ទាត់ ID បានទេ។";
         setVerificationError(errorMsg);
+        
+        // Capture alternate regions if available
+        if (data?.alternateRegions && Array.isArray(data.alternateRegions)) {
+          setAlternateRegions(data.alternateRegions);
+        }
+        
         toast({
           title: "ផ្ទៀងផ្ទាត់បរាជ័យ",
           description: errorMsg,
@@ -794,12 +806,89 @@ const TopupPage: React.FC = () => {
     setUserId(value);
     setVerifiedUser(null);
     setVerificationError(null);
+    setAlternateRegions(null);
   };
 
   const handleServerIdChange = (value: string) => {
     setServerId(value);
     setVerifiedUser(null);
     setVerificationError(null);
+    setAlternateRegions(null);
+  };
+
+  // Handle retry with alternate region
+  const handleRetryWithRegion = async (region: { gameName: string; apiCode: string; requiresZone: boolean }) => {
+    setIsVerifying(true);
+    setVerificationError(null);
+    setVerifiedUser(null);
+    setAlternateRegions(null);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("verify-game-id", {
+        body: {
+          gameName: region.gameName,
+          userId: userId.trim(),
+          serverId: region.requiresZone ? serverId.trim() : undefined,
+        },
+      });
+
+      console.log("Retry verification response:", data, error);
+
+      if (error) {
+        let msg = error.message || "Verification failed";
+        const anyErr = error as any;
+        if (anyErr?.context && typeof anyErr.context.json === "function") {
+          try {
+            const body = await anyErr.context.json();
+            msg = body?.error || body?.message || msg;
+          } catch {
+            // ignore JSON parse failures
+          }
+        }
+        throw new Error(msg);
+      }
+
+      if (data?.success) {
+        const username = data.username || data.accountName;
+        setVerifiedUser({
+          username,
+          id: userId,
+          serverId: serverId || undefined,
+          accountName: data.accountName,
+        });
+
+        saveToCache(userId, serverId);
+
+        toast({
+          title: "✓ ផ្ទៀងផ្ទាត់ដោយជោគជ័យ",
+          description: `Username: ${username} (${region.gameName})`,
+        });
+      } else {
+        const errorMsg = data?.error || "មិនអាចផ្ទៀងផ្ទាត់ ID បានទេ។";
+        setVerificationError(errorMsg);
+        
+        if (data?.alternateRegions && Array.isArray(data.alternateRegions)) {
+          setAlternateRegions(data.alternateRegions);
+        }
+        
+        toast({
+          title: "ផ្ទៀងផ្ទាត់បរាជ័យ",
+          description: errorMsg,
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      console.error("Retry verification error:", error);
+      const errorMsg = error?.message || "មិនអាចផ្ទៀងផ្ទាត់ ID បានទេ។";
+      setVerificationError(errorMsg);
+      toast({
+        title: "ផ្ទៀងផ្ទាត់បរាជ័យ",
+        description: errorMsg,
+        variant: "destructive",
+      });
+    } finally {
+      setIsVerifying(false);
+    }
   };
 
   // Render dynamic ID input fields based on game
@@ -1061,13 +1150,41 @@ const TopupPage: React.FC = () => {
                   <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-red-400 to-rose-500 flex items-center justify-center shadow-lg flex-shrink-0">
                     <span className="text-xl sm:text-2xl">❌</span>
                   </div>
-                  <div>
+                  <div className="flex-1">
                     <h3 className="font-bold text-red-700 dark:text-red-300 text-sm sm:text-base flex items-center gap-2 mb-1">
                       <XCircle className="w-4 h-4" />
                       ផ្ទៀងផ្ទាត់បរាជ័យ 😔
                     </h3>
                     <p className="text-xs sm:text-sm text-red-600 dark:text-red-400">{verificationError}</p>
                     <p className="text-xs text-red-500/70 mt-1">សូមពិនិត្យ ID ម្តងទៀត</p>
+                    
+                    {/* Alternate Regions Switcher */}
+                    {alternateRegions && alternateRegions.length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-red-300/30">
+                        <p className="text-xs sm:text-sm font-semibold text-amber-700 dark:text-amber-300 mb-2 flex items-center gap-2">
+                          🌍 សាកល្បង Region ផ្សេង:
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {alternateRegions.map((region) => (
+                            <Button
+                              key={region.apiCode}
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleRetryWithRegion(region)}
+                              disabled={isVerifying}
+                              className="text-xs bg-white/80 hover:bg-amber-50 border-amber-400/50 text-amber-700 hover:text-amber-800 hover:border-amber-500 transition-colors"
+                            >
+                              {isVerifying ? (
+                                <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                              ) : (
+                                <span className="mr-1">🔄</span>
+                              )}
+                              {region.gameName}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
