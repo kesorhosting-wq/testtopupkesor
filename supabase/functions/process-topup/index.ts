@@ -392,6 +392,16 @@ async function fulfillG2BulkOrder(supabase: any, orderId: string) {
     return { success: true, status: order.status, message: 'Already processed' };
   }
 
+  // IMMEDIATELY update to 'processing' to prevent double-execution and show user status
+  console.log(`[Fulfill] Updating order ${orderId} to processing status`);
+  await supabase
+    .from('topup_orders')
+    .update({ 
+      status: 'processing',
+      status_message: 'Processing order with G2Bulk...'
+    })
+    .eq('id', orderId);
+
   console.log(`[Fulfill] Order found:`, JSON.stringify({
     id: order.id,
     g2bulk_product_id: order.g2bulk_product_id,
