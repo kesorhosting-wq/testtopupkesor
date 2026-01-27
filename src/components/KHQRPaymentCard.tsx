@@ -141,7 +141,8 @@ const KHQRPaymentCard = ({
         setPaymentStatus("completed");
         toast({ title: "✅ បានបញ្ចប់!", description: "Top-up របស់អ្នកបានជោគជ័យ" });
         onComplete?.();
-        setTimeout(() => navigate(`/invoice/${orderId}`), 2000);
+        // Navigate immediately to invoice
+        navigate(`/invoice/${orderId}`);
       } else if (result.status === "failed") {
         toast({ 
           title: "❌ បរាជ័យ", 
@@ -149,7 +150,8 @@ const KHQRPaymentCard = ({
           variant: "destructive"
         });
         onComplete?.();
-        setTimeout(() => navigate(`/invoice/${orderId}`), 3000);
+        // Navigate immediately to invoice to show failure details
+        navigate(`/invoice/${orderId}`);
       } else {
         // Timeout - still processing, redirect to invoice to check status
         toast({ 
@@ -157,7 +159,8 @@ const KHQRPaymentCard = ({
           description: "សូមពិនិត្យស្ថានភាពនៅទំព័រវិក្កយបត្រ" 
         });
         onComplete?.();
-        setTimeout(() => navigate(`/invoice/${orderId}`), 2000);
+        // Navigate immediately to invoice
+        navigate(`/invoice/${orderId}`);
       }
     } catch (error) {
       console.error("Post-payment error:", error);
