@@ -92,13 +92,48 @@ const KHQRPaymentCard = ({
     }
   }, [wsUrl, paymentStatus, orderId]);
 
+  // Supabase Realtime subscription for instant payment detection
+  useEffect(() => {
+    if (paymentStatus !== "pending") return;
+
+    console.log(`[Payment] Setting up Realtime subscription for order: ${orderId}`);
+
+    const channel = supabase
+      .channel(`order-status-${orderId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'topup_orders',
+          filter: `id=eq.${orderId}`,
+        },
+        (payload) => {
+          const newStatus = (payload.new as any)?.status;
+          console.log(`[Realtime] Order ${orderId} status changed to: ${newStatus}`);
+
+          if (newStatus === 'paid' || newStatus === 'completed' || newStatus === 'processing') {
+            handlePaymentSuccess();
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log(`[Realtime] Subscription status: ${status}`);
+      });
+
+    return () => {
+      console.log(`[Payment] Cleaning up Realtime subscription for order: ${orderId}`);
+      supabase.removeChannel(channel);
+    };
+  }, [paymentStatus, orderId]);
+
   // Polling for payment status (fallback)
   useEffect(() => {
     if (paymentStatus !== "pending") return;
 
     const pollInterval = setInterval(async () => {
       await checkPaymentStatus(true);
-    }, 2000); // Faster polling - every 2 seconds
+    }, 1500); // Fast polling - every 1.5 seconds
 
     return () => clearInterval(pollInterval);
   }, [paymentStatus, orderId]);
