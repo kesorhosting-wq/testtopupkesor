@@ -1,14 +1,15 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Wallet, Copy, Check, Timer, Smartphone, Shield, RefreshCw,
-  Loader2, CheckCircle2, Wifi, WifiOff, Zap
+  Loader2, CheckCircle2
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { useNotificationSound } from "@/hooks/useNotificationSound";
 
 interface KHQRPaymentCardProps {
   qrCode: string;
@@ -37,6 +38,7 @@ const KHQRPaymentCard = ({
 }: KHQRPaymentCardProps) => {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { playCompletedSound, playFailedSound } = useNotificationSound();
 
   const [timeLeft, setTimeLeft] = useState(expiresIn);
   const [copied, setCopied] = useState(false);
@@ -96,13 +98,13 @@ const KHQRPaymentCard = ({
 
     const pollInterval = setInterval(async () => {
       await checkPaymentStatus(true);
-    }, 5000);
+    }, 2000); // Faster polling - every 2 seconds
 
     return () => clearInterval(pollInterval);
   }, [paymentStatus, orderId]);
 
-  // Poll for final order completion status
-  const waitForOrderCompletion = useCallback(async (maxAttempts = 30, delayMs = 2000) => {
+  // Poll for final order completion status - faster polling
+  const waitForOrderCompletion = useCallback(async (maxAttempts = 60, delayMs = 1000) => {
     for (let i = 0; i < maxAttempts; i++) {
       try {
         const { data: order } = await supabase
@@ -139,13 +141,14 @@ const KHQRPaymentCard = ({
       
       if (result.success && result.status === "completed") {
         setPaymentStatus("completed");
+        playCompletedSound(); // Play success sound
         toast({ title: "✅ បានបញ្ចប់!", description: "Top-up របស់អ្នកបានជោគជ័យ" });
         onComplete?.();
-        // Navigate immediately to invoice
         navigate(`/invoice/${orderId}`);
       } else if (result.status === "failed") {
+        playFailedSound(); // Play failed sound
         toast({ 
-          title: "❌ បរាជ័យ", 
+          title: "❌ បរាជ័យ",
           description: result.message || "ការបញ្ជាទិញបរាជ័យ សូមទាក់ទងផ្នែកជំនួយ",
           variant: "destructive"
         });
