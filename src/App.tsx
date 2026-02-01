@@ -32,7 +32,7 @@ const App = () => (
                 <Sonner />
                 <Routes>
                 <Route path="/" element={<Index />} />
-                <Route path="/topup/:gameId" element={<TopupPage />} />
+                <Route path="/topup/:gameSlug" element={<TopupPage />} />
                 <Route path="/cart" element={<CartPage />} />
                 <Route path="/checkout" element={<CheckoutPage />} />
                 <Route path="/invoice/:orderId" element={<InvoicePage />} />
