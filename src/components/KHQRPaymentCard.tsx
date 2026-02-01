@@ -38,12 +38,12 @@ const KHQRPaymentCard = ({
 }: KHQRPaymentCardProps) => {
   const { toast } = useToast();
   const navigate = useNavigate();
-  const { playCompletedSound, playFailedSound } = useNotificationSound();
+  const { playCompletedSound } = useNotificationSound();
 
   const [timeLeft, setTimeLeft] = useState(expiresIn);
   const [copied, setCopied] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [paymentStatus, setPaymentStatus] = useState<"pending" | "paid" | "processing" | "completed">("pending");
+  const [paymentStatus, setPaymentStatus] = useState<"pending" | "paid">("pending");
 
   // Timer countdown
   useEffect(() => {
@@ -138,74 +138,20 @@ const KHQRPaymentCard = ({
     return () => clearInterval(pollInterval);
   }, [paymentStatus, orderId]);
 
-  // Poll for final order completion status - faster polling
-  const waitForOrderCompletion = useCallback(async (maxAttempts = 60, delayMs = 1000) => {
-    for (let i = 0; i < maxAttempts; i++) {
-      try {
-        const { data: order } = await supabase
-          .from("topup_orders")
-          .select("status, status_message")
-          .eq("id", orderId)
-          .single();
-
-        console.log(`[Payment] Poll attempt ${i + 1}: status = ${order?.status}`);
-
-        if (order?.status === "completed") {
-          return { success: true, status: "completed" };
-        } else if (order?.status === "failed") {
-          return { success: false, status: "failed", message: order?.status_message };
-        }
-        // Continue polling for pending, processing, paid statuses
-      } catch (error) {
-        console.error("Poll error:", error);
-      }
-      await new Promise(resolve => setTimeout(resolve, delayMs));
-    }
-    return { success: false, status: "timeout" };
-  }, [orderId]);
-
-  const handlePaymentSuccess = async () => {
+  // Immediate redirect on payment detection - no waiting for completion
+  const handlePaymentSuccess = useCallback(() => {
+    if (paymentStatus === "paid") return; // Prevent duplicate calls
+    
     setPaymentStatus("paid");
-    toast({ title: "ការបង់ប្រាក់បានទទួល!", description: "កំពុងដំណើរការការបញ្ជាទិញ..." });
-
-    try {
-      setPaymentStatus("processing");
-      
-      // Wait for order to complete (G2Bulk fulfillment)
-      const result = await waitForOrderCompletion();
-      
-      if (result.success && result.status === "completed") {
-        setPaymentStatus("completed");
-        playCompletedSound(); // Play success sound
-        toast({ title: "✅ បានបញ្ចប់!", description: "Top-up របស់អ្នកបានជោគជ័យ" });
-        onComplete?.();
-        navigate(`/invoice/${orderId}`);
-      } else if (result.status === "failed") {
-        playFailedSound(); // Play failed sound
-        toast({ 
-          title: "❌ បរាជ័យ",
-          description: result.message || "ការបញ្ជាទិញបរាជ័យ សូមទាក់ទងផ្នែកជំនួយ",
-          variant: "destructive"
-        });
-        onComplete?.();
-        // Navigate immediately to invoice to show failure details
-        navigate(`/invoice/${orderId}`);
-      } else {
-        // Timeout - still processing, redirect to invoice to check status
-        toast({ 
-          title: "កំពុងដំណើរការ...", 
-          description: "សូមពិនិត្យស្ថានភាពនៅទំព័រវិក្កយបត្រ" 
-        });
-        onComplete?.();
-        // Navigate immediately to invoice
-        navigate(`/invoice/${orderId}`);
-      }
-    } catch (error) {
-      console.error("Post-payment error:", error);
+    playCompletedSound();
+    toast({ title: "✅ ការបង់ប្រាក់បានទទួល!", description: "កំពុងបញ្ជូនទៅទំព័រវិក្កយបត្រ..." });
+    
+    // Quick redirect after showing success state
+    setTimeout(() => {
       onComplete?.();
       navigate(`/invoice/${orderId}`);
-    }
-  };
+    }, 1000);
+  }, [orderId, navigate, onComplete, playCompletedSound, toast, paymentStatus]);
 
   const checkPaymentStatus = useCallback(async (silent = false) => {
     if (!silent) setChecking(true);
@@ -250,21 +196,13 @@ const KHQRPaymentCard = ({
 
   const isExpired = timeLeft === 0;
 
-  if (paymentStatus === "paid" || paymentStatus === "processing" || paymentStatus === "completed") {
+  if (paymentStatus === "paid") {
     return (
       <Card className="overflow-hidden border-0 shadow-2xl">
         <div className="bg-gradient-to-br from-green-500 via-green-600 to-green-700 p-8 text-white text-center">
           <CheckCircle2 className="w-16 h-16 mx-auto mb-4 animate-bounce" />
-          <h2 className="text-2xl font-bold mb-2">
-            {paymentStatus === "paid" ? "ការបង់ប្រាក់បានទទួល!" :
-             paymentStatus === "processing" ? "កំពុងដំណើរការ..." :
-             "បានបញ្ចប់!"}
-          </h2>
-          <p className="text-white/80">
-            {paymentStatus === "processing"
-              ? "កំពុងដំណើរការការបញ្ជាទិញរបស់អ្នក..."
-              : "នឹងបញ្ជូនទៅទំព័រដើម..."}
-          </p>
+          <h2 className="text-2xl font-bold mb-2">ការបង់ប្រាក់បានទទួល!</h2>
+          <p className="text-white/80">កំពុងបញ្ជូនទៅទំព័រវិក្កយបត្រ...</p>
         </div>
       </Card>
     );
