@@ -2,7 +2,6 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { Game } from '@/contexts/SiteContext';
-import { generateGameSlug } from '@/lib/utils';
 
 interface GameCardProps {
   game: Game;
@@ -15,10 +14,9 @@ interface GameCardProps {
 const GameCard: React.FC<GameCardProps> = ({ game, cardBgColor, cardBorderColor, cardFrameImage, cardBorderImage }) => {
   const frameColor = cardBorderColor || 'hsl(43 74% 49%)';
   const bgColor = cardBgColor || 'hsl(43 74% 70% / 0.3)';
-  const gameSlug = generateGameSlug(game.name);
   
   return (
-    <Link to={`/topup/${gameSlug}`} className="group block">
+    <Link to={`/topup/${game.slug}`} className="group block">
       <div className="relative p-2 sm:p-4">
         {/* Animated glow effect (runs only on hover to avoid jank) */}
         <div

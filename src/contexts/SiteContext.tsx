@@ -6,6 +6,7 @@ import { handleApiError } from '@/lib/errorHandler';
 export interface Game {
   id: string;
   name: string;
+  slug: string;
   image: string;
   packages: Package[];
   specialPackages: Package[];
@@ -340,6 +341,7 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const gamesWithPackages: Game[] = gamesData.map(game => ({
           id: game.id,
           name: game.name,
+          slug: (game as any).slug || game.name.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-'),
           image: game.image || '',
           g2bulkCategoryId: (game as any).g2bulk_category_id || undefined,
           packages: (packagesData || [])
@@ -401,6 +403,7 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const gamesWithPackages: Game[] = gamesData.map(game => ({
           id: game.id,
           name: game.name,
+          slug: (game as any).slug || game.name.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-'),
           image: game.image || '',
           g2bulkCategoryId: (game as any).g2bulk_category_id || undefined,
           packages: (packagesData || [])
@@ -472,6 +475,7 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         .insert({ 
           name: game.name, 
           image: game.image,
+          slug: game.slug,
           g2bulk_category_id: game.g2bulkCategoryId || null
         })
         .select()
@@ -481,7 +485,8 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (data) {
         setGames(prev => [...prev, { 
           ...data, 
-          id: data.id, 
+          id: data.id,
+          slug: (data as any).slug || data.name.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-'),
           g2bulkCategoryId: (data as any).g2bulk_category_id || undefined,
           packages: [], 
           specialPackages: [] 
@@ -497,6 +502,7 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const updateData: any = {};
       if (updatedGame.name !== undefined) updateData.name = updatedGame.name;
       if (updatedGame.image !== undefined) updateData.image = updatedGame.image;
+      if (updatedGame.slug !== undefined) updateData.slug = updatedGame.slug;
       if (updatedGame.g2bulkCategoryId !== undefined) updateData.g2bulk_category_id = updatedGame.g2bulkCategoryId || null;
 
       const { error } = await supabase

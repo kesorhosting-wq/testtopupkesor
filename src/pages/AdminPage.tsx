@@ -91,9 +91,10 @@ const AdminPage: React.FC = () => {
 
   // Game state
   const [editingGame, setEditingGame] = useState<string | null>(null);
-  const [newGame, setNewGame] = useState({ name: "", image: "", g2bulkCategoryId: "" });
-  const [editGameData, setEditGameData] = useState<{ name: string; image: string; g2bulkCategoryId: string }>({
+  const [newGame, setNewGame] = useState({ name: "", slug: "", image: "", g2bulkCategoryId: "" });
+  const [editGameData, setEditGameData] = useState<{ name: string; slug: string; image: string; g2bulkCategoryId: string }>({
     name: "",
+    slug: "",
     image: "",
     g2bulkCategoryId: "",
   });
@@ -174,12 +175,16 @@ const AdminPage: React.FC = () => {
       return;
     }
 
+    // Auto-generate slug from name if not provided
+    const slug = newGame.slug || newGame.name.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
+
     await addGame({
       name: newGame.name,
+      slug: slug,
       image: newGame.image,
       g2bulkCategoryId: newGame.g2bulkCategoryId || undefined,
     });
-    setNewGame({ name: "", image: "", g2bulkCategoryId: "" });
+    setNewGame({ name: "", slug: "", image: "", g2bulkCategoryId: "" });
     toast({ title: "Game added!" });
   };
 
@@ -187,14 +192,16 @@ const AdminPage: React.FC = () => {
     setEditingGame(game.id);
     setEditGameData({
       name: game.name,
+      slug: game.slug,
       image: game.image,
-      g2bulkCategoryId: (game as Game & { g2bulkCategoryId?: string }).g2bulkCategoryId || "",
+      g2bulkCategoryId: game.g2bulkCategoryId || "",
     });
   };
 
   const handleSaveGame = async (gameId: string) => {
     await updateGame(gameId, {
       name: editGameData.name,
+      slug: editGameData.slug,
       image: editGameData.image,
       g2bulkCategoryId: editGameData.g2bulkCategoryId || undefined,
     });
@@ -1619,6 +1626,16 @@ const AdminPage: React.FC = () => {
                         className="border-gold/50"
                       />
                     </div>
+                    <div className="flex-1 min-w-[150px]">
+                      <label className="text-sm font-medium mb-2 block">URL Slug</label>
+                      <Input
+                        placeholder="e.g. mobile-legends"
+                        value={newGame.slug}
+                        onChange={(e) => setNewGame((prev) => ({ ...prev, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') }))}
+                        className="border-gold/50"
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">Auto-generated if empty</p>
+                    </div>
                     <div className="flex-1 min-w-[250px]">
                       <label className="text-sm font-medium mb-2 block">Link to G2Bulk Category</label>
                       <G2BulkCategorySelector
@@ -1661,6 +1678,14 @@ const AdminPage: React.FC = () => {
                               <Input
                                 value={editGameData.name}
                                 onChange={(e) => setEditGameData((prev) => ({ ...prev, name: e.target.value }))}
+                                className="border-gold/50"
+                              />
+                            </div>
+                            <div className="flex-1 min-w-[120px]">
+                              <label className="text-xs text-muted-foreground mb-1 block">URL Slug</label>
+                              <Input
+                                value={editGameData.slug}
+                                onChange={(e) => setEditGameData((prev) => ({ ...prev, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') }))}
                                 className="border-gold/50"
                               />
                             </div>
