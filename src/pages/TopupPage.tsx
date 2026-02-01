@@ -12,7 +12,7 @@ import { useCart } from "@/contexts/CartContext";
 import { useFavicon } from "@/hooks/useFavicon";
 import { useGameIdCache } from "@/hooks/useGameIdCache";
 import { toast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
+import { cn, findGameBySlug } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 
 interface VerifiedUser {
@@ -23,7 +23,7 @@ interface VerifiedUser {
 }
 
 const TopupPage: React.FC = () => {
-  const { gameId } = useParams();
+  const { gameSlug } = useParams();
   const navigate = useNavigate();
   const { games, paymentMethods, settings, isLoading } = useSite();
   const { addToCart } = useCart();
@@ -31,10 +31,11 @@ const TopupPage: React.FC = () => {
   // Update favicon dynamically
   useFavicon(settings.siteIcon);
 
-  const game = games.find((g) => g.id === gameId);
+  // Find game by slug instead of ID
+  const game = findGameBySlug(games, gameSlug || '');
 
   // Auto-load cached game IDs (24h cache)
-  const { cachedUserId, cachedServerId, saveToCache, hasCachedData } = useGameIdCache(gameId);
+  const { cachedUserId, cachedServerId, saveToCache, hasCachedData } = useGameIdCache(game?.id);
 
   const [userId, setUserId] = useState("");
   const [serverId, setServerId] = useState("");
