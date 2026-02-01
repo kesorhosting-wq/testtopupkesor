@@ -18,15 +18,3 @@ export function generateGameSlug(gameName: string): string {
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-');
 }
-
-/**
- * Find a game by its slug
- */
-export function findGameBySlug<T extends { id: string; name: string }>(games: T[], slug: string): T | undefined {
-  const normalizedSlug = slug.toLowerCase();
-  
-  return games.find(game => {
-    const gameSlug = generateGameSlug(game.name);
-    return gameSlug === normalizedSlug;
-  });
-}
